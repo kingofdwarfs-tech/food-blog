@@ -1,0 +1,40 @@
+name: Публикация статьи
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Установить зависимости
+        run: pip install requests
+
+      - name: Сгенерировать статью
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          BLOG_BASE_URL: ${{ secrets.BLOG_BASE_URL }}
+        run: python scripts/generate_article.py
+
+      - name: Закоммитить обновлённый фид
+        run: |
+          git config user.name "FoodBot"
+          git config user.email "bot@noreply.github.com"
+          git add feed/
+          git add used_topics.json || true
+          git diff --staged --quiet || git commit -m "🍳 Новая статья $(date +'%Y-%m-%d')"
+          git push
