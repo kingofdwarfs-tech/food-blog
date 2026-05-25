@@ -4,8 +4,6 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from xml.etree.ElementTree import Element, SubElement, tostring
-from xml.dom import minidom
 import random
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
@@ -74,7 +72,6 @@ def generate_article(topic: str) -> dict:
         timeout=60,
     )
     resp.raise_for_status()
-
     raw = resp.json()["choices"][0]["message"]["content"].strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
@@ -111,42 +108,51 @@ def save_feed(feed_path: str, items: list):
         json.dump(items, f, ensure_ascii=False, indent=2)
 
 
+def escape_xml(text: str) -> str:
+    return (text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;"))
+
+
 def build_rss(items: list, blog_url: str) -> str:
-    rss = Element("rss", version="2.0")
-    rss.set("xmlns:media", "http://search.yahoo.com/mrss/")
-    rss.set("xmlns:content", "http://purl.org/rss/1.0/modules/content/")
+    now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    
+    items_xml = ""
+    for item in items[:30]:
+        html = item.get("content_html", "")
+        if item.get("image_url"):
+            html = f'<img src="{item["image_url"]}" alt="{escape_xml(item["title"])}"/><br/>' + html
+        
+        # CDATA позволяет вставить HTML без экранирования
+        items_xml += f"""
+  <item>
+    <title><![CDATA[{item["title"]}]]></title>
+    <link>{blog_url}/articles/{item["id"]}.html</link>
+    <guid isPermaLink="false">{item["id"]}</guid>
+    <pubDate>{item["pub_date"]}</pubDate>
+    <description><![CDATA[{item["description"]}]]></description>
+    <content:encoded><![CDATA[{html}]]></content:encoded>
+    <enclosure url="{item.get("image_url", "")}" type="image/jpeg" length="0"/>
+  </item>"""
 
-    channel = SubElement(rss, "channel")
-    SubElement(channel, "title").text = "Кулинарный блог Ольги"
-    SubElement(channel, "link").text = blog_url
-    SubElement(channel, "description").text = "Простые и вкусные рецепты каждый день"
-    SubElement(channel, "language").text = "ru"
-    SubElement(channel, "lastBuildDate").text = datetime.now(timezone.utc).strftime(
-        "%a, %d %b %Y %H:%M:%S +0000"
-    )
-
-    for item_data in items[:30]:
-        item = SubElement(channel, "item")
-        SubElement(item, "title").text = item_data["title"]
-        SubElement(item, "link").text = f"{blog_url}/articles/{item_data['id']}.html"
-        SubElement(item, "description").text = item_data["description"]
-        SubElement(item, "pubDate").text = item_data["pub_date"]
-        SubElement(item, "guid").text = item_data["id"]
-
-        content = SubElement(item, "content:encoded")
-        html = item_data["content_html"]
-        if item_data.get("image_url"):
-            img_tag = f'<img src="{item_data["image_url"]}" alt="{item_data["title"]}" style="max-width:100%;"/><br/>'
-            html = img_tag + html
-        content.text = html
-
-        if item_data.get("image_url"):
-            media = SubElement(item, "media:content")
-            media.set("url", item_data["image_url"])
-            media.set("medium", "image")
-
-    xmlstr = minidom.parseString(tostring(rss, encoding="unicode")).toprettyxml(indent="  ")
-    return "\n".join(xmlstr.split("\n")[1:])
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>А что у нас на обед?</title>
+    <link>{blog_url}</link>
+    <description>Простые и вкусные рецепты каждый день</description>
+    <language>ru</language>
+    <lastBuildDate>{now}</lastBuildDate>
+    <atom:link href="{blog_url}/feed/feed.xml" rel="self" type="application/rss+xml"/>
+    {items_xml}
+  </channel>
+</rss>"""
 
 
 def main():
